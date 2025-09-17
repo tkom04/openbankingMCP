@@ -1,9 +1,8 @@
 """
-Minimal MCP-like server for Open Banking (TrueLayer).
+MCP server for Open Banking (TrueLayer).
 
-Exposes:
-  - GET /tools/list        → lists available tools
-  - POST /call/get_accounts → returns account info
+Implements the Model Context Protocol (MCP) for Cursor integration.
+Provides tools for accessing bank account data via TrueLayer API.
 
 Runs with mocked data by default. If you set TRUELAYER_CLIENT_ID and
 TRUELAYER_CLIENT_SECRET as environment variables, it will try to call
@@ -12,9 +11,10 @@ TrueLayer Sandbox instead.
 
 import json
 import os
+import sys
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, Dict, List
 
 
 def build_tools_list():
@@ -104,16 +104,128 @@ def build_tools_list():
     ]
 
 
-class MCPRequestHandler(BaseHTTPRequestHandler):
-    """Implements a tiny HTTP API for MCP."""
-
-    def _send_json(self, obj, status=200):
-        body = json.dumps(obj).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+class MCPServer:
+    """Implements the Model Context Protocol (MCP) for Cursor integration."""
+    
+    def __init__(self):
+        self.tools = build_tools_list()
+    
+    def send_response(self, response: Dict[str, Any]):
+        """Send a JSON response to stdout."""
+        print(json.dumps(response), flush=True)
+    
+    def handle_request(self, request: Dict[str, Any]):
+        """Handle incoming MCP requests."""
+        method = request.get("method")
+        params = request.get("params", {})
+        
+        if method == "initialize":
+            self.handle_initialize(request)
+        elif method == "notifications/initialized":
+            # This is a notification, no response needed
+            pass
+        elif method == "tools/list":
+            self.handle_tools_list(request)
+        elif method == "tools/call":
+            self.handle_tools_call(request)
+        else:
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}"
+                }
+            })
+    
+    def handle_initialize(self, request: Dict[str, Any]):
+        """Handle MCP initialization request."""
+        self.send_response({
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "openbanking-mcp",
+                    "version": "1.0.0"
+                }
+            }
+        })
+    
+    def handle_tools_list(self, request: Dict[str, Any]):
+        """Handle tools/list request."""
+        print(f"📋 Tools list requested, returning {len(self.tools)} tools", file=sys.stderr)
+        response = {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {
+                "tools": self.tools
+            }
+        }
+        print(f"📤 Sending response: {json.dumps(response, indent=2)}", file=sys.stderr)
+        self.send_response(response)
+    
+    def handle_tools_call(self, request: Dict[str, Any]):
+        """Handle tools/call request."""
+        params = request.get("params", {})
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+        
+        if tool_name == "get_accounts":
+            result = self._get_accounts_data()
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, indent=2)
+                        }
+                    ]
+                }
+            })
+        elif tool_name == "get_transactions":
+            account_id = arguments.get("account_id")
+            start_date = arguments.get("start_date")
+            end_date = arguments.get("end_date")
+            
+            if not all([account_id, start_date, end_date]):
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "error": {
+                        "code": -32602,
+                        "message": "Missing required parameters: account_id, start_date, end_date"
+                    }
+                })
+                return
+            
+            result = self._get_transactions_data(account_id, start_date, end_date)
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, indent=2)
+                        }
+                    ]
+                }
+            })
+        else:
+            self.send_response({
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "error": {
+                    "code": -32601,
+                    "message": f"Unknown tool: {tool_name}"
+                }
+            })
 
     # ---------- TrueLayer helpers ----------
 
@@ -137,7 +249,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     "grant_type": "client_credentials",
                     "client_id": cid,
                     "client_secret": secret,
-                    "scope": "accounts",
+                    "scope": "accounts transactions balance",
                 }
             ).encode()
             req = urllib.request.Request(
@@ -161,7 +273,12 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req) as resp:
-            raw = json.loads(resp.read().decode())
+            response_text = resp.read().decode()
+            print(f"🔍 TrueLayer accounts response: {response_text[:200]}...")
+            if not response_text.strip():
+                print("❌ Empty response from TrueLayer accounts API")
+                return []
+            raw = json.loads(response_text)
             return raw.get("results", [])
 
     def _fetch_truelayer_transactions(self, token, account_id, start_date, end_date):
@@ -177,7 +294,12 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         req = urllib.request.Request(full_url)
         req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req) as resp:
-            raw = json.loads(resp.read().decode())
+            response_text = resp.read().decode()
+            print(f"🔍 TrueLayer transactions response: {response_text[:200]}...")
+            if not response_text.strip():
+                print("❌ Empty response from TrueLayer transactions API")
+                return []
+            raw = json.loads(response_text)
             return raw.get("results", [])
 
     def _get_accounts_data(self):
@@ -297,55 +419,41 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             }
         ]
 
-    # ---------- HTTP Handlers ----------
-
-    def do_GET(self):
-        if self.path == "/tools/list":
-            self._send_json({"tools": build_tools_list()})
-        else:
-            self._send_json({"error": "Not found"}, 404)
-
-    def do_POST(self):
-        if self.path == "/call/get_accounts":
-            accounts = self._get_accounts_data()
-            self._send_json(accounts)
-        elif self.path == "/call/get_transactions":
-            # Parse JSON body to get parameters
-            content_length = int(self.headers.get('Content-Length', 0))
-            if content_length > 0:
-                post_data = self.rfile.read(content_length)
-                try:
-                    params = json.loads(post_data.decode('utf-8'))
-                    account_id = params.get('account_id')
-                    start_date = params.get('start_date')
-                    end_date = params.get('end_date')
-                    
-                    if not all([account_id, start_date, end_date]):
-                        self._send_json({"error": "Missing required parameters: account_id, start_date, end_date"}, 400)
-                        return
-                    
-                    transactions = self._get_transactions_data(account_id, start_date, end_date)
-                    self._send_json(transactions)
-                except json.JSONDecodeError:
-                    self._send_json({"error": "Invalid JSON in request body"}, 400)
-            else:
-                self._send_json({"error": "No request body provided"}, 400)
-        else:
-            self._send_json({"error": "Not found"}, 404)
-
-
-def run_server():
-    host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", 5000))
-    server = HTTPServer((host, port), MCPRequestHandler)
-    print(f"MCP server running on {host}:{port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+def run_mcp_server():
+    """Run the MCP server using stdio communication."""
+    print("🚀 OpenBanking MCP server starting...", file=sys.stderr)
+    print("🔧 Server initialized, waiting for requests...", file=sys.stderr)
+    
+    server = MCPServer()
+    
+    # Read from stdin line by line
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+            
+        try:
+            request = json.loads(line)
+            server.handle_request(request)
+        except json.JSONDecodeError as e:
+            server.send_response({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32700,
+                    "message": f"Parse error: {e}"
+                }
+            })
+        except Exception as e:
+            server.send_response({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal error: {e}"
+                }
+            })
 
 
 if __name__ == "__main__":
-    run_server()
+    run_mcp_server()
