@@ -48,6 +48,58 @@ def build_tools_list():
                     ],
                 },
             },
+        },
+        {
+            "name": "get_transactions",
+            "description": "Get transactions for a specific account within a date range.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "account_id": {
+                        "type": "string",
+                        "description": "The account ID to fetch transactions for"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "Start date in YYYY-MM-DD format"
+                    },
+                    "end_date": {
+                        "type": "string", 
+                        "format": "date",
+                        "description": "End date in YYYY-MM-DD format"
+                    }
+                },
+                "required": ["account_id", "start_date", "end_date"],
+                "additionalProperties": False,
+            },
+            "output_schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "account_id": {"type": "string"},
+                        "amount": {"type": "number"},
+                        "currency": {"type": "string"},
+                        "description": {"type": "string"},
+                        "transaction_type": {"type": "string"},
+                        "merchant_name": {"type": "string"},
+                        "category": {"type": "string"},
+                        "date": {"type": "string", "format": "date"},
+                        "timestamp": {"type": "string", "format": "date-time"},
+                    },
+                    "required": [
+                        "id",
+                        "account_id", 
+                        "amount",
+                        "currency",
+                        "description",
+                        "transaction_type",
+                        "date",
+                    ],
+                },
+            },
         }
     ]
 
@@ -96,6 +148,22 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             raw = json.loads(resp.read().decode())
             return raw.get("results", [])
 
+    def _fetch_truelayer_transactions(self, token, account_id, start_date, end_date):
+        """Fetch transactions from TrueLayer API for a specific account and date range."""
+        url = f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions"
+        params = {
+            "from": start_date,
+            "to": end_date
+        }
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{url}?{query_string}"
+        
+        req = urllib.request.Request(full_url)
+        req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req) as resp:
+            raw = json.loads(resp.read().decode())
+            return raw.get("results", [])
+
     def _get_accounts_data(self):
         token = self._get_truelayer_token()
         if token:
@@ -121,6 +189,79 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             },
         ]
 
+    def _get_transactions_data(self, account_id, start_date, end_date):
+        """Get transactions data, trying TrueLayer first, then falling back to mock data."""
+        token = self._get_truelayer_token()
+        if token:
+            try:
+                return self._fetch_truelayer_transactions(token, account_id, start_date, end_date)
+            except Exception as e:
+                print(f"TrueLayer transactions API error: {e}")
+        
+        # Fallback mock data
+        return [
+            {
+                "id": "txn001",
+                "account_id": account_id,
+                "amount": -45.50,
+                "currency": "GBP",
+                "description": "TESCO STORES 1234 LONDON",
+                "transaction_type": "debit",
+                "merchant_name": "Tesco",
+                "category": "groceries",
+                "date": "2024-09-15",
+                "timestamp": "2024-09-15T14:30:00Z",
+            },
+            {
+                "id": "txn002", 
+                "account_id": account_id,
+                "amount": -12.99,
+                "currency": "GBP",
+                "description": "AMAZON UK SERVICES",
+                "transaction_type": "debit",
+                "merchant_name": "Amazon",
+                "category": "shopping",
+                "date": "2024-09-14",
+                "timestamp": "2024-09-14T09:15:00Z",
+            },
+            {
+                "id": "txn003",
+                "account_id": account_id,
+                "amount": 2500.00,
+                "currency": "GBP", 
+                "description": "SALARY PAYMENT",
+                "transaction_type": "credit",
+                "merchant_name": "Employer Ltd",
+                "category": "salary",
+                "date": "2024-09-01",
+                "timestamp": "2024-09-01T00:00:00Z",
+            },
+            {
+                "id": "txn004",
+                "account_id": account_id,
+                "amount": -89.99,
+                "currency": "GBP",
+                "description": "BRITISH GAS ENERGY",
+                "transaction_type": "debit", 
+                "merchant_name": "British Gas",
+                "category": "utilities",
+                "date": "2024-08-28",
+                "timestamp": "2024-08-28T06:00:00Z",
+            },
+            {
+                "id": "txn005",
+                "account_id": account_id,
+                "amount": -25.00,
+                "currency": "GBP",
+                "description": "CASH WITHDRAWAL ATM",
+                "transaction_type": "debit",
+                "merchant_name": "ATM",
+                "category": "cash",
+                "date": "2024-08-25",
+                "timestamp": "2024-08-25T16:45:00Z",
+            }
+        ]
+
     # ---------- HTTP Handlers ----------
 
     def do_GET(self):
@@ -133,6 +274,27 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/call/get_accounts":
             accounts = self._get_accounts_data()
             self._send_json(accounts)
+        elif self.path == "/call/get_transactions":
+            # Parse JSON body to get parameters
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                post_data = self.rfile.read(content_length)
+                try:
+                    params = json.loads(post_data.decode('utf-8'))
+                    account_id = params.get('account_id')
+                    start_date = params.get('start_date')
+                    end_date = params.get('end_date')
+                    
+                    if not all([account_id, start_date, end_date]):
+                        self._send_json({"error": "Missing required parameters: account_id, start_date, end_date"}, 400)
+                        return
+                    
+                    transactions = self._get_transactions_data(account_id, start_date, end_date)
+                    self._send_json(transactions)
+                except json.JSONDecodeError:
+                    self._send_json({"error": "Invalid JSON in request body"}, 400)
+            else:
+                self._send_json({"error": "No request body provided"}, 400)
         else:
             self._send_json({"error": "Not found"}, 404)
 
