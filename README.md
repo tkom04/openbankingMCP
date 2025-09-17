@@ -6,11 +6,11 @@ A Model Context Protocol (MCP) server for Open Banking integration with TrueLaye
 
 ### 1. Setup Credentials
 
-Copy your real credentials to `mcp.local.json`:
+Copy your real credentials to `mcp.local.json` (kept out of version control) **or** export them as environment variables before running the server. The committed `mcp.json` intentionally keeps placeholder values so no secrets are stored in the repo:
 
 ```json
 {
-  "mcpServers": {
+"mcpServers": {
     "openbanking-mcp": {
       "command": "py",
       "args": ["server.py"],
@@ -22,6 +22,13 @@ Copy your real credentials to `mcp.local.json`:
     }
   }
 }
+```
+
+Alternatively, set the variables directly in your shell or process manager (example shown for POSIX shells):
+
+```bash
+export TRUELAYER_CLIENT_ID="your-real-client-id"
+export TRUELAYER_CLIENT_SECRET="your-real-client-secret"
 ```
 
 ### 2. Install Dependencies

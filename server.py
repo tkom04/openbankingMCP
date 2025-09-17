@@ -17,6 +17,15 @@ import urllib.request
 from typing import Any, Dict, List
 
 
+def _is_debug_payload_logging_enabled() -> bool:
+    """Return True if verbose TrueLayer payload logging is enabled."""
+    flag = os.getenv("TRUELAYER_DEBUG_PAYLOADS", "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
+DEBUG_TRUELAYER_PAYLOADS = _is_debug_payload_logging_enabled()
+
+
 def build_tools_list():
     """Describe available MCP tools with JSON schema metadata."""
     return [
@@ -273,13 +282,42 @@ class MCPServer:
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req) as resp:
-            response_text = resp.read().decode()
-            print(f"🔍 TrueLayer accounts response: {response_text[:200]}...")
-            if not response_text.strip():
+            response_bytes = resp.read()
+            status = getattr(resp, "status", None)
+            if status is None:
+                status = resp.getcode()
+            request_id = None
+            if hasattr(resp, "headers") and resp.headers:
+                request_id = resp.headers.get("X-Request-Id")
+
+            metadata_bits = [f"status={status}", f"bytes={len(response_bytes)}"]
+            if request_id:
+                metadata_bits.append(f"request_id={request_id}")
+            print(f"🔍 TrueLayer accounts response received ({', '.join(metadata_bits)})")
+
+            if DEBUG_TRUELAYER_PAYLOADS:
+                preview = response_bytes[:200].decode("utf-8", errors="replace")
+                print(f"🪵 Accounts payload preview (debug enabled): {preview}...")
+
+            if not response_bytes.strip():
                 print("❌ Empty response from TrueLayer accounts API")
                 return []
-            raw = json.loads(response_text)
-            return raw.get("results", [])
+
+            try:
+                response_text = response_bytes.decode()
+            except UnicodeDecodeError:
+                print("❌ Unable to decode TrueLayer accounts response as UTF-8")
+                raise
+
+            try:
+                raw = json.loads(response_text)
+            except json.JSONDecodeError:
+                print("❌ Failed to parse JSON from TrueLayer accounts response")
+                raise
+
+            results = raw.get("results", [])
+            print(f"📊 Parsed {len(results)} accounts from TrueLayer response")
+            return results
 
     def _fetch_truelayer_transactions(self, token, account_id, start_date, end_date):
         """Fetch transactions from TrueLayer API for a specific account and date range."""
@@ -294,13 +332,47 @@ class MCPServer:
         req = urllib.request.Request(full_url)
         req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req) as resp:
-            response_text = resp.read().decode()
-            print(f"🔍 TrueLayer transactions response: {response_text[:200]}...")
-            if not response_text.strip():
+            response_bytes = resp.read()
+            status = getattr(resp, "status", None)
+            if status is None:
+                status = resp.getcode()
+            request_id = None
+            if hasattr(resp, "headers") and resp.headers:
+                request_id = resp.headers.get("X-Request-Id")
+
+            metadata_bits = [f"status={status}", f"bytes={len(response_bytes)}"]
+            if request_id:
+                metadata_bits.append(f"request_id={request_id}")
+            print(
+                "🔍 TrueLayer transactions response received "
+                f"({', '.join(metadata_bits)})"
+            )
+
+            if DEBUG_TRUELAYER_PAYLOADS:
+                preview = response_bytes[:200].decode("utf-8", errors="replace")
+                print(f"🪵 Transactions payload preview (debug enabled): {preview}...")
+
+            if not response_bytes.strip():
                 print("❌ Empty response from TrueLayer transactions API")
                 return []
-            raw = json.loads(response_text)
-            return raw.get("results", [])
+
+            try:
+                response_text = response_bytes.decode()
+            except UnicodeDecodeError:
+                print("❌ Unable to decode TrueLayer transactions response as UTF-8")
+                raise
+
+            try:
+                raw = json.loads(response_text)
+            except json.JSONDecodeError:
+                print("❌ Failed to parse JSON from TrueLayer transactions response")
+                raise
+
+            results = raw.get("results", [])
+            print(
+                f"📊 Parsed {len(results)} transactions from TrueLayer response"
+            )
+            return results
 
     def _get_accounts_data(self):
         token = self._get_truelayer_token()

@@ -5,8 +5,8 @@
       "args": ["server.py"],
       "cwd": "C:\\1 Projects\\Cursor Projects\\GPT Experimentation\\OPEN BANKING MCP BUISNESS\\openbankingMCP",
       "env": {
-        "TRUELAYER_CLIENT_ID": "sandbox-openbankingmcp-a1035f",
-        "TRUELAYER_CLIENT_SECRET": "36c39d8f-814a-49d6-9d01-f53e8bbbf8f1"
+        "TRUELAYER_CLIENT_ID": "YOUR_TRUELAYER_CLIENT_ID",
+        "TRUELAYER_CLIENT_SECRET": "YOUR_TRUELAYER_CLIENT_SECRET"
       }
     }
   }
