@@ -121,24 +121,40 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         """Exchange client credentials for access token."""
         cid = os.getenv("TRUELAYER_CLIENT_ID")
         secret = os.getenv("TRUELAYER_CLIENT_SECRET")
+        
+        print(f"🔍 Checking TrueLayer credentials...")
+        print(f"   Client ID: {cid[:10]}..." if cid else "   Client ID: None")
+        print(f"   Secret: {'***' if secret else 'None'}")
+        
         if not cid or not secret:
+            print("❌ Missing TrueLayer credentials")
             return None
 
-        data = urllib.parse.urlencode(
-            {
-                "grant_type": "client_credentials",
-                "client_id": cid,
-                "client_secret": secret,
-                "scope": "accounts",
-            }
-        ).encode()
-        req = urllib.request.Request(
-            "https://auth.truelayer-sandbox.com/connect/token", data=data
-        )
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        try:
+            print("🚀 Attempting TrueLayer token exchange...")
+            data = urllib.parse.urlencode(
+                {
+                    "grant_type": "client_credentials",
+                    "client_id": cid,
+                    "client_secret": secret,
+                    "scope": "accounts",
+                }
+            ).encode()
+            req = urllib.request.Request(
+                "https://auth.truelayer-sandbox.com/connect/token", data=data
+            )
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
 
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode()).get("access_token")
+            with urllib.request.urlopen(req) as resp:
+                response_data = json.loads(resp.read().decode())
+                token = response_data.get("access_token")
+                print(f"✅ TrueLayer token obtained: {token[:20]}..." if token else "❌ No token in response")
+                return token
+        except Exception as e:
+            print(f"❌ TrueLayer token exchange failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def _fetch_truelayer_accounts(self, token):
         url = "https://api.truelayer-sandbox.com/data/v1/accounts"
@@ -168,9 +184,19 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         token = self._get_truelayer_token()
         if token:
             try:
-                return self._fetch_truelayer_accounts(token)
+                print("🔑 TrueLayer token obtained, fetching accounts...")
+                accounts = self._fetch_truelayer_accounts(token)
+                print(f"✅ TrueLayer returned {len(accounts)} accounts")
+                return accounts
             except Exception as e:
-                print(f"TrueLayer API error: {e}")
+                import traceback
+                print("❌ TrueLayer API error:", e)
+                print("📋 Full traceback:")
+                traceback.print_exc()
+                print("🔄 Falling back to mock data...")
+        else:
+            print("⚠️ No TrueLayer credentials found, using mock data")
+        
         # Fallback mock
         return [
             {
@@ -194,9 +220,18 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         token = self._get_truelayer_token()
         if token:
             try:
-                return self._fetch_truelayer_transactions(token, account_id, start_date, end_date)
+                print(f"🔑 TrueLayer token obtained, fetching transactions for {account_id} ({start_date} to {end_date})...")
+                transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date)
+                print(f"✅ TrueLayer returned {len(transactions)} transactions")
+                return transactions
             except Exception as e:
-                print(f"TrueLayer transactions API error: {e}")
+                import traceback
+                print("❌ TrueLayer transactions API error:", e)
+                print("📋 Full traceback:")
+                traceback.print_exc()
+                print("🔄 Falling back to mock data...")
+        else:
+            print("⚠️ No TrueLayer credentials found, using mock data")
         
         # Fallback mock data
         return [
