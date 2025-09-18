@@ -32,36 +32,31 @@ def build_tools_list():
         {
             "name": "get_accounts",
             "description": "List all user bank accounts.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": False,
             },
-            "output_schema": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "name": {"type": "string"},
-                        "currency": {"type": "string"},
-                        "balance": {"type": "number"},
-                        "account_type": {"type": "string"},
-                    },
-                    "required": [
-                        "id",
-                        "name",
-                        "currency",
-                        "balance",
-                        "account_type",
-                    ],
-                },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                }
             },
         },
         {
             "name": "get_transactions",
             "description": "Get transactions for a specific account within a date range.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "account_id": {
@@ -74,7 +69,7 @@ def build_tools_list():
                         "description": "Start date in YYYY-MM-DD format"
                     },
                     "end_date": {
-                        "type": "string", 
+                        "type": "string",
                         "format": "date",
                         "description": "End date in YYYY-MM-DD format"
                     }
@@ -82,32 +77,20 @@ def build_tools_list():
                 "required": ["account_id", "start_date", "end_date"],
                 "additionalProperties": False,
             },
-            "output_schema": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "account_id": {"type": "string"},
-                        "amount": {"type": "number"},
-                        "currency": {"type": "string"},
-                        "description": {"type": "string"},
-                        "transaction_type": {"type": "string"},
-                        "merchant_name": {"type": "string"},
-                        "category": {"type": "string"},
-                        "date": {"type": "string", "format": "date"},
-                        "timestamp": {"type": "string", "format": "date-time"},
-                    },
-                    "required": [
-                        "id",
-                        "account_id", 
-                        "amount",
-                        "currency",
-                        "description",
-                        "transaction_type",
-                        "date",
-                    ],
-                },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                }
             },
         }
     ]
@@ -115,19 +98,19 @@ def build_tools_list():
 
 class MCPServer:
     """Implements the Model Context Protocol (MCP) for Cursor integration."""
-    
+
     def __init__(self):
         self.tools = build_tools_list()
-    
+
     def send_response(self, response: Dict[str, Any]):
         """Send a JSON response to stdout."""
         print(json.dumps(response), flush=True)
-    
+
     def handle_request(self, request: Dict[str, Any]):
         """Handle incoming MCP requests."""
         method = request.get("method")
         params = request.get("params", {})
-        
+
         if method == "initialize":
             self.handle_initialize(request)
         elif method == "notifications/initialized":
@@ -146,7 +129,7 @@ class MCPServer:
                     "message": f"Method not found: {method}"
                 }
             })
-    
+
     def handle_initialize(self, request: Dict[str, Any]):
         """Handle MCP initialization request."""
         self.send_response({
@@ -163,7 +146,7 @@ class MCPServer:
                 }
             }
         })
-    
+
     def handle_tools_list(self, request: Dict[str, Any]):
         """Handle tools/list request."""
         print(f"📋 Tools list requested, returning {len(self.tools)} tools", file=sys.stderr)
@@ -176,13 +159,13 @@ class MCPServer:
         }
         print(f"📤 Sending response: {json.dumps(response, indent=2)}", file=sys.stderr)
         self.send_response(response)
-    
+
     def handle_tools_call(self, request: Dict[str, Any]):
         """Handle tools/call request."""
         params = request.get("params", {})
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
-        
+
         if tool_name == "get_accounts":
             result = self._get_accounts_data()
             self.send_response({
@@ -201,7 +184,7 @@ class MCPServer:
             account_id = arguments.get("account_id")
             start_date = arguments.get("start_date")
             end_date = arguments.get("end_date")
-            
+
             if not all([account_id, start_date, end_date]):
                 self.send_response({
                     "jsonrpc": "2.0",
@@ -212,7 +195,7 @@ class MCPServer:
                     }
                 })
                 return
-            
+
             result = self._get_transactions_data(account_id, start_date, end_date)
             self.send_response({
                 "jsonrpc": "2.0",
@@ -242,11 +225,11 @@ class MCPServer:
         """Exchange client credentials for access token."""
         cid = os.getenv("TRUELAYER_CLIENT_ID")
         secret = os.getenv("TRUELAYER_CLIENT_SECRET")
-        
+
         print(f"🔍 Checking TrueLayer credentials...")
         print(f"   Client ID: {cid[:10]}..." if cid else "   Client ID: None")
         print(f"   Secret: {'***' if secret else 'None'}")
-        
+
         if not cid or not secret:
             print("❌ Missing TrueLayer credentials")
             return None
@@ -328,7 +311,7 @@ class MCPServer:
         }
         query_string = urllib.parse.urlencode(params)
         full_url = f"{url}?{query_string}"
-        
+
         req = urllib.request.Request(full_url)
         req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req) as resp:
@@ -390,7 +373,7 @@ class MCPServer:
                 print("🔄 Falling back to mock data...")
         else:
             print("⚠️ No TrueLayer credentials found, using mock data")
-        
+
         # Fallback mock
         return [
             {
@@ -426,7 +409,7 @@ class MCPServer:
                 print("🔄 Falling back to mock data...")
         else:
             print("⚠️ No TrueLayer credentials found, using mock data")
-        
+
         # Fallback mock data
         return [
             {
@@ -442,7 +425,7 @@ class MCPServer:
                 "timestamp": "2024-09-15T14:30:00Z",
             },
             {
-                "id": "txn002", 
+                "id": "txn002",
                 "account_id": account_id,
                 "amount": -12.99,
                 "currency": "GBP",
@@ -457,7 +440,7 @@ class MCPServer:
                 "id": "txn003",
                 "account_id": account_id,
                 "amount": 2500.00,
-                "currency": "GBP", 
+                "currency": "GBP",
                 "description": "SALARY PAYMENT",
                 "transaction_type": "credit",
                 "merchant_name": "Employer Ltd",
@@ -471,7 +454,7 @@ class MCPServer:
                 "amount": -89.99,
                 "currency": "GBP",
                 "description": "BRITISH GAS ENERGY",
-                "transaction_type": "debit", 
+                "transaction_type": "debit",
                 "merchant_name": "British Gas",
                 "category": "utilities",
                 "date": "2024-08-28",
@@ -495,15 +478,15 @@ def run_mcp_server():
     """Run the MCP server using stdio communication."""
     print("🚀 OpenBanking MCP server starting...", file=sys.stderr)
     print("🔧 Server initialized, waiting for requests...", file=sys.stderr)
-    
+
     server = MCPServer()
-    
+
     # Read from stdin line by line
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-            
+
         try:
             request = json.loads(line)
             server.handle_request(request)
