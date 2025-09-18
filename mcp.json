@@ -1,12 +1,13 @@
 {
   "mcpServers": {
     "openbanking-mcp": {
-      "command": "py",
+      "command": "python",
       "args": ["server.py"],
-      "cwd": "C:\\1 Projects\\Cursor Projects\\GPT Experimentation\\OPEN BANKING MCP BUISNESS\\openbankingMCP",
+      "cwd": ".",
       "env": {
         "TRUELAYER_CLIENT_ID": "YOUR_TRUELAYER_CLIENT_ID",
-        "TRUELAYER_CLIENT_SECRET": "YOUR_TRUELAYER_CLIENT_SECRET"
+        "TRUELAYER_CLIENT_SECRET": "YOUR_TRUELAYER_CLIENT_SECRET",
+        "REDIRECT_URI": "http://localhost:8080/callback"
       }
     }
   }

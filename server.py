@@ -12,9 +12,11 @@ TrueLayer Sandbox instead.
 import json
 import os
 import sys
-import urllib.parse
-import urllib.request
-from typing import Any, Dict, List
+import re
+import requests
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 
 def _is_debug_payload_logging_enabled() -> bool:
@@ -30,33 +32,42 @@ def build_tools_list():
     """Describe available MCP tools with JSON schema metadata."""
     return [
         {
-            "name": "get_accounts",
-            "description": "List all user bank accounts.",
-            "inputSchema": {
+            "name": "create_data_auth_link",
+            "description": "Create a TrueLayer OAuth authorization URL for data access.",
+            "input_schema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": False,
             },
-            "outputSchema": {
+        },
+        {
+            "name": "exchange_code",
+            "description": "Exchange OAuth authorization code for access and refresh tokens.",
+            "input_schema": {
                 "type": "object",
                 "properties": {
-                    "content": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string"},
-                                "text": {"type": "string"}
-                            }
-                        }
+                    "code": {
+                        "type": "string",
+                        "description": "The authorization code from OAuth callback"
                     }
-                }
+                },
+                "required": ["code"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_accounts",
+            "description": "List all user bank accounts.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
             },
         },
         {
             "name": "get_transactions",
             "description": "Get transactions for a specific account within a date range.",
-            "inputSchema": {
+            "input_schema": {
                 "type": "object",
                 "properties": {
                     "account_id": {
@@ -72,25 +83,25 @@ def build_tools_list():
                         "type": "string",
                         "format": "date",
                         "description": "End date in YYYY-MM-DD format"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of transactions to return (default: 50)",
+                        "minimum": 1,
+                        "maximum": 500
+                    },
+                    "page": {
+                        "type": "integer",
+                        "description": "Page number for pagination (default: 1)",
+                        "minimum": 1
+                    },
+                    "include_raw": {
+                        "type": "boolean",
+                        "description": "Include full transaction payloads instead of redacted data (default: false)"
                     }
                 },
                 "required": ["account_id", "start_date", "end_date"],
                 "additionalProperties": False,
-            },
-            "outputSchema": {
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string"},
-                                "text": {"type": "string"}
-                            }
-                        }
-                    }
-                }
             },
         }
     ]
@@ -101,10 +112,23 @@ class MCPServer:
 
     def __init__(self):
         self.tools = build_tools_list()
+        # In-memory token storage (in production, use proper storage)
+        self.user_tokens = {}
 
     def send_response(self, response: Dict[str, Any]):
         """Send a JSON response to stdout."""
         print(json.dumps(response), flush=True)
+
+    def send_error(self, request_id: Any, code: int, message: str):
+        """Send a JSON-RPC error response."""
+        self.send_response({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": code,
+                "message": message
+            }
+        })
 
     def handle_request(self, request: Dict[str, Any]):
         """Handle incoming MCP requests."""
@@ -121,14 +145,7 @@ class MCPServer:
         elif method == "tools/call":
             self.handle_tools_call(request)
         else:
-            self.send_response({
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "error": {
-                    "code": -32601,
-                    "message": f"Method not found: {method}"
-                }
-            })
+            self.send_error(request.get("id"), -32601, f"Method not found: {method}")
 
     def handle_initialize(self, request: Dict[str, Any]):
         """Handle MCP initialization request."""
@@ -166,213 +183,273 @@ class MCPServer:
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
 
-        if tool_name == "get_accounts":
-            result = self._get_accounts_data()
-            self.send_response({
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "result": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(result, indent=2)
-                        }
-                    ]
-                }
-            })
-        elif tool_name == "get_transactions":
-            account_id = arguments.get("account_id")
-            start_date = arguments.get("start_date")
-            end_date = arguments.get("end_date")
-
-            if not all([account_id, start_date, end_date]):
+        try:
+            if tool_name == "create_data_auth_link":
+                result = self._create_data_auth_link()
                 self.send_response({
                     "jsonrpc": "2.0",
                     "id": request.get("id"),
-                    "error": {
-                        "code": -32602,
-                        "message": "Missing required parameters: account_id, start_date, end_date"
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(result, indent=2)
+                            }
+                        ]
                     }
                 })
-                return
+            elif tool_name == "exchange_code":
+                code = arguments.get("code")
+                if not code:
+                    self.send_error(request.get("id"), -32602, "Missing required parameter: code")
+                    return
+                
+                result = self._exchange_code(code)
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(result, indent=2)
+                            }
+                        ]
+                    }
+                })
+            elif tool_name == "get_accounts":
+                result = self._get_accounts_data()
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(result, indent=2)
+                            }
+                        ]
+                    }
+                })
+            elif tool_name == "get_transactions":
+                account_id = arguments.get("account_id")
+                start_date = arguments.get("start_date")
+                end_date = arguments.get("end_date")
+                limit = arguments.get("limit", 50)
+                page = arguments.get("page", 1)
+                include_raw = arguments.get("include_raw", False)
 
-            result = self._get_transactions_data(account_id, start_date, end_date)
-            self.send_response({
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "result": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(result, indent=2)
-                        }
-                    ]
-                }
-            })
-        else:
-            self.send_response({
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "error": {
-                    "code": -32601,
-                    "message": f"Unknown tool: {tool_name}"
-                }
-            })
+                if not all([account_id, start_date, end_date]):
+                    self.send_error(request.get("id"), -32602, "Missing required parameters: account_id, start_date, end_date")
+                    return
 
-    # ---------- TrueLayer helpers ----------
+                # Validate date format
+                if not self._validate_date_format(start_date) or not self._validate_date_format(end_date):
+                    self.send_error(request.get("id"), -32602, "Invalid date format. Use YYYY-MM-DD")
+                    return
 
-    def _get_truelayer_token(self):
-        """Exchange client credentials for access token."""
-        cid = os.getenv("TRUELAYER_CLIENT_ID")
-        secret = os.getenv("TRUELAYER_CLIENT_SECRET")
-
-        print(f"🔍 Checking TrueLayer credentials...")
-        print(f"   Client ID: {cid[:10]}..." if cid else "   Client ID: None")
-        print(f"   Secret: {'***' if secret else 'None'}")
-
-        if not cid or not secret:
-            print("❌ Missing TrueLayer credentials")
-            return None
-
-        try:
-            print("🚀 Attempting TrueLayer token exchange...")
-            data = urllib.parse.urlencode(
-                {
-                    "grant_type": "client_credentials",
-                    "client_id": cid,
-                    "client_secret": secret,
-                    "scope": "accounts transactions balance",
-                }
-            ).encode()
-            req = urllib.request.Request(
-                "https://auth.truelayer-sandbox.com/connect/token", data=data
-            )
-            req.add_header("Content-Type", "application/x-www-form-urlencoded")
-
-            with urllib.request.urlopen(req) as resp:
-                response_data = json.loads(resp.read().decode())
-                token = response_data.get("access_token")
-                print(f"✅ TrueLayer token obtained: {token[:20]}..." if token else "❌ No token in response")
-                return token
+                result = self._get_transactions_data(account_id, start_date, end_date, limit, page, include_raw)
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(result, indent=2)
+                            }
+                        ]
+                    }
+                })
+            else:
+                self.send_error(request.get("id"), -32601, f"Unknown tool: {tool_name}")
         except Exception as e:
-            print(f"❌ TrueLayer token exchange failed: {e}")
+            print(f"❌ Error in tool {tool_name}: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
-            return None
+            self.send_error(request.get("id"), -32000, f"Tool execution error: {str(e)}")
+
+    def _validate_date_format(self, date_str: str) -> bool:
+        """Validate that date string is in YYYY-MM-DD format."""
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+    def _create_data_auth_link(self) -> Dict[str, Any]:
+        """Create a TrueLayer OAuth authorization URL for data access."""
+        client_id = os.getenv("TRUELAYER_CLIENT_ID")
+        redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8080/callback")
+        
+        if not client_id:
+            return {
+                "error": "TRUELAYER_CLIENT_ID environment variable not set",
+                "mock_url": "https://auth.truelayer-sandbox.com/connect/authorize?response_type=code&client_id=YOUR_CLIENT_ID&scope=info%20accounts%20balance%20transactions&redirect_uri=http://localhost:8080/callback&providers=mock"
+            }
+
+        params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "scope": "info accounts balance transactions",
+            "redirect_uri": redirect_uri,
+            "providers": "mock"
+        }
+        
+        auth_url = f"https://auth.truelayer-sandbox.com/connect/authorize?{urlencode(params)}"
+        
+        return {
+            "auth_url": auth_url,
+            "redirect_uri": redirect_uri,
+            "instructions": "Visit the auth_url to authorize access, then use the returned code with exchange_code tool"
+        }
+
+    def _exchange_code(self, code: str) -> Dict[str, Any]:
+        """Exchange OAuth authorization code for access and refresh tokens."""
+        client_id = os.getenv("TRUELAYER_CLIENT_ID")
+        client_secret = os.getenv("TRUELAYER_CLIENT_SECRET")
+        redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8080/callback")
+
+        if not all([client_id, client_secret]):
+            return {
+                "error": "Missing TrueLayer credentials. Set TRUELAYER_CLIENT_ID and TRUELAYER_CLIENT_SECRET environment variables."
+            }
+
+        try:
+            data = {
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri
+            }
+
+            response = requests.post(
+                "https://auth.truelayer-sandbox.com/connect/token",
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            response.raise_for_status()
+
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+
+            if access_token:
+                # Store tokens in memory (in production, use proper storage)
+                self.user_tokens["current"] = {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token
+                }
+                
+                return {
+                    "success": True,
+                    "access_token": access_token[:20] + "...",  # Redacted for security
+                    "refresh_token": refresh_token[:20] + "..." if refresh_token else None,
+                    "message": "Tokens stored successfully"
+                }
+            else:
+                return {
+                    "error": "No access token in response",
+                    "response": token_data
+                }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "error": f"Token exchange failed: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "error": f"Unexpected error: {str(e)}"
+            }
+
+    def _get_user_token(self) -> Optional[str]:
+        """Get the current user's access token."""
+        user_token = self.user_tokens.get("current")
+        if user_token and user_token.get("access_token"):
+            return user_token["access_token"]
+        return None
+
+    def _get_truelayer_token(self):
+        """Get TrueLayer token (legacy method for backward compatibility)."""
+        return self._get_user_token()
 
     def _fetch_truelayer_accounts(self, token):
-        url = "https://api.truelayer-sandbox.com/data/v1/accounts"
-        req = urllib.request.Request(url)
-        req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req) as resp:
-            response_bytes = resp.read()
-            status = getattr(resp, "status", None)
-            if status is None:
-                status = resp.getcode()
-            request_id = None
-            if hasattr(resp, "headers") and resp.headers:
-                request_id = resp.headers.get("X-Request-Id")
-
-            metadata_bits = [f"status={status}", f"bytes={len(response_bytes)}"]
-            if request_id:
-                metadata_bits.append(f"request_id={request_id}")
-            print(f"🔍 TrueLayer accounts response received ({', '.join(metadata_bits)})")
+        """Fetch accounts from TrueLayer API."""
+        try:
+            response = requests.get(
+                "https://api.truelayer-sandbox.com/data/v1/accounts",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                preview = response_bytes[:200].decode("utf-8", errors="replace")
-                print(f"🪵 Accounts payload preview (debug enabled): {preview}...")
+                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...")
 
-            if not response_bytes.strip():
-                print("❌ Empty response from TrueLayer accounts API")
-                return []
-
-            try:
-                response_text = response_bytes.decode()
-            except UnicodeDecodeError:
-                print("❌ Unable to decode TrueLayer accounts response as UTF-8")
-                raise
-
-            try:
-                raw = json.loads(response_text)
-            except json.JSONDecodeError:
-                print("❌ Failed to parse JSON from TrueLayer accounts response")
-                raise
-
-            results = raw.get("results", [])
+            data = response.json()
+            results = data.get("results", [])
             print(f"📊 Parsed {len(results)} accounts from TrueLayer response")
             return results
 
-    def _fetch_truelayer_transactions(self, token, account_id, start_date, end_date):
+        except requests.exceptions.RequestException as e:
+            print(f"❌ TrueLayer accounts API error: {e}")
+            raise
+
+    def _fetch_truelayer_transactions(self, token, account_id, start_date, end_date, limit=50, page=1):
         """Fetch transactions from TrueLayer API for a specific account and date range."""
-        url = f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions"
-        params = {
-            "from": start_date,
-            "to": end_date
-        }
-        query_string = urllib.parse.urlencode(params)
-        full_url = f"{url}?{query_string}"
+        try:
+            params = {
+                "from": start_date,
+                "to": end_date,
+                "limit": limit,
+                "page": page
+            }
 
-        req = urllib.request.Request(full_url)
-        req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req) as resp:
-            response_bytes = resp.read()
-            status = getattr(resp, "status", None)
-            if status is None:
-                status = resp.getcode()
-            request_id = None
-            if hasattr(resp, "headers") and resp.headers:
-                request_id = resp.headers.get("X-Request-Id")
-
-            metadata_bits = [f"status={status}", f"bytes={len(response_bytes)}"]
-            if request_id:
-                metadata_bits.append(f"request_id={request_id}")
-            print(
-                "🔍 TrueLayer transactions response received "
-                f"({', '.join(metadata_bits)})"
+            response = requests.get(
+                f"https://api.truelayer-sandbox.com/data/v1/accounts/{account_id}/transactions",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params
             )
+            response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                preview = response_bytes[:200].decode("utf-8", errors="replace")
-                print(f"🪵 Transactions payload preview (debug enabled): {preview}...")
+                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...")
 
-            if not response_bytes.strip():
-                print("❌ Empty response from TrueLayer transactions API")
-                return []
-
-            try:
-                response_text = response_bytes.decode()
-            except UnicodeDecodeError:
-                print("❌ Unable to decode TrueLayer transactions response as UTF-8")
-                raise
-
-            try:
-                raw = json.loads(response_text)
-            except json.JSONDecodeError:
-                print("❌ Failed to parse JSON from TrueLayer transactions response")
-                raise
-
-            results = raw.get("results", [])
-            print(
-                f"📊 Parsed {len(results)} transactions from TrueLayer response"
-            )
+            data = response.json()
+            results = data.get("results", [])
+            print(f"📊 Parsed {len(results)} transactions from TrueLayer response")
             return results
 
+        except requests.exceptions.RequestException as e:
+            print(f"❌ TrueLayer transactions API error: {e}")
+            raise
+
+    def _redact_transaction(self, transaction: Dict[str, Any]) -> Dict[str, Any]:
+        """Redact sensitive transaction data for security."""
+        redacted = {
+            "id": transaction.get("id", ""),
+            "date": transaction.get("date", ""),
+            "amount": transaction.get("amount", 0),
+            "currency": transaction.get("currency", ""),
+            "category": transaction.get("category", ""),
+            "classification": transaction.get("classification", "")
+        }
+        return redacted
+
     def _get_accounts_data(self):
+        """Get accounts data, trying TrueLayer first, then falling back to mock data."""
         token = self._get_truelayer_token()
         if token:
             try:
-                print("🔑 TrueLayer token obtained, fetching accounts...")
+                print("🔑 User token found, fetching accounts...")
                 accounts = self._fetch_truelayer_accounts(token)
                 print(f"✅ TrueLayer returned {len(accounts)} accounts")
                 return accounts
             except Exception as e:
-                import traceback
-                print("❌ TrueLayer API error:", e)
-                print("📋 Full traceback:")
-                traceback.print_exc()
+                print(f"❌ TrueLayer API error: {e}")
                 print("🔄 Falling back to mock data...")
         else:
-            print("⚠️ No TrueLayer credentials found, using mock data")
+            print("⚠️ No user token found, using mock data")
 
         # Fallback mock
         return [
@@ -392,26 +469,28 @@ class MCPServer:
             },
         ]
 
-    def _get_transactions_data(self, account_id, start_date, end_date):
+    def _get_transactions_data(self, account_id, start_date, end_date, limit=50, page=1, include_raw=False):
         """Get transactions data, trying TrueLayer first, then falling back to mock data."""
         token = self._get_truelayer_token()
         if token:
             try:
-                print(f"🔑 TrueLayer token obtained, fetching transactions for {account_id} ({start_date} to {end_date})...")
-                transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date)
+                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...")
+                transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date, limit, page)
                 print(f"✅ TrueLayer returned {len(transactions)} transactions")
+                
+                if not include_raw:
+                    # Redact sensitive data by default
+                    transactions = [self._redact_transaction(txn) for txn in transactions]
+                
                 return transactions
             except Exception as e:
-                import traceback
-                print("❌ TrueLayer transactions API error:", e)
-                print("📋 Full traceback:")
-                traceback.print_exc()
+                print(f"❌ TrueLayer transactions API error: {e}")
                 print("🔄 Falling back to mock data...")
         else:
-            print("⚠️ No TrueLayer credentials found, using mock data")
+            print("⚠️ No user token found, using mock data")
 
         # Fallback mock data
-        return [
+        mock_transactions = [
             {
                 "id": "txn001",
                 "account_id": account_id,
@@ -474,6 +553,13 @@ class MCPServer:
             }
         ]
 
+        if not include_raw:
+            # Redact sensitive data by default
+            mock_transactions = [self._redact_transaction(txn) for txn in mock_transactions]
+
+        return mock_transactions
+
+
 def run_mcp_server():
     """Run the MCP server using stdio communication."""
     print("🚀 OpenBanking MCP server starting...", file=sys.stderr)
@@ -491,23 +577,9 @@ def run_mcp_server():
             request = json.loads(line)
             server.handle_request(request)
         except json.JSONDecodeError as e:
-            server.send_response({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"Parse error: {e}"
-                }
-            })
+            server.send_error(None, -32700, f"Parse error: {e}")
         except Exception as e:
-            server.send_response({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {e}"
-                }
-            })
+            server.send_error(None, -32603, f"Internal error: {e}")
 
 
 if __name__ == "__main__":
