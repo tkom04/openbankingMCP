@@ -17,6 +17,7 @@ import requests
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
+from validate import validate_tools
 
 
 def _is_debug_payload_logging_enabled() -> bool:
@@ -34,16 +35,32 @@ def build_tools_list():
         {
             "name": "create_data_auth_link",
             "description": "Create a TrueLayer OAuth authorization URL for data access.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": False,
             },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                },
+                "required": ["content"]
+            }
         },
         {
             "name": "exchange_code",
             "description": "Exchange OAuth authorization code for access and refresh tokens.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "code": {
@@ -54,20 +71,52 @@ def build_tools_list():
                 "required": ["code"],
                 "additionalProperties": False,
             },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                },
+                "required": ["content"]
+            }
         },
         {
             "name": "get_accounts",
             "description": "List all user bank accounts.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": False,
             },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                },
+                "required": ["content"]
+            }
         },
         {
             "name": "get_transactions",
             "description": "Get transactions for a specific account within a date range.",
-            "input_schema": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "account_id": {
@@ -103,6 +152,22 @@ def build_tools_list():
                 "required": ["account_id", "start_date", "end_date"],
                 "additionalProperties": False,
             },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"}
+                            }
+                        }
+                    }
+                },
+                "required": ["content"]
+            }
         }
     ]
 
@@ -111,27 +176,57 @@ class MCPServer:
     """Implements the Model Context Protocol (MCP) for Cursor integration."""
 
     def __init__(self):
-        self.tools = build_tools_list()
+        self.tools = validate_tools(build_tools_list())
         # In-memory token storage (in production, use proper storage)
         self.user_tokens = {}
+        
+        # Log startup info
+        print(f"🚀 server_start python={sys.version.split()[0]} cwd={os.getcwd()}", file=sys.stderr)
 
     def send_response(self, response: Dict[str, Any]):
         """Send a JSON response to stdout."""
+        # Log outgoing response (redacted)
+        self._log_request("rpc_out", response)
         print(json.dumps(response), flush=True)
 
     def send_error(self, request_id: Any, code: int, message: str):
         """Send a JSON-RPC error response."""
-        self.send_response({
+        error_response = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {
                 "code": code,
                 "message": message
             }
-        })
+        }
+        self.send_response(error_response)
+    
+    def _log_request(self, direction: str, data: Dict[str, Any]):
+        """Log MCP requests/responses with PII redaction."""
+        # Create a copy for logging
+        log_data = data.copy()
+        
+        # Redact sensitive fields
+        if "params" in log_data and "arguments" in log_data["params"]:
+            args = log_data["params"]["arguments"]
+            if "code" in args:
+                args["code"] = "[REDACTED]"
+        
+        # Redact result content if it contains tokens
+        if "result" in log_data and "content" in log_data["result"]:
+            content = log_data["result"]["content"]
+            if isinstance(content, list) and len(content) > 0:
+                text_content = content[0].get("text", "")
+                if "access_token" in text_content or "refresh_token" in text_content:
+                    content[0]["text"] = "[REDACTED_TOKEN_DATA]"
+        
+        print(f"📝 {direction}: {json.dumps(log_data, indent=2)}", file=sys.stderr)
 
     def handle_request(self, request: Dict[str, Any]):
         """Handle incoming MCP requests."""
+        # Log incoming request (redacted)
+        self._log_request("rpc_in", request)
+        
         method = request.get("method")
         params = request.get("params", {})
 
@@ -174,7 +269,6 @@ class MCPServer:
                 "tools": self.tools
             }
         }
-        print(f"📤 Sending response: {json.dumps(response, indent=2)}", file=sys.stderr)
         self.send_response(response)
 
     def handle_tools_call(self, request: Dict[str, Any]):
