@@ -1,38 +1,38 @@
-# Ignore Python cache
+# MCP local overrides
+.cursor/mcp.local.json
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual environments
-.venv/
 venv/
 env/
 ENV/
+.venv/
 
-# Secrets and credentials
-*.env
-mcp.local.json
-secrets.json
-
-# Don't push real credentials
-openbankingMCP/secrets.json
-
-# IDE files
+# IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-logs/
-
-# Temporary files
-*.tmp
-*.temp

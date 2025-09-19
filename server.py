@@ -13,7 +13,9 @@ import json
 import os
 import sys
 import re
+import copy
 import requests
+import csv
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -49,18 +51,21 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
             "name": "exchange_code",
-            "description": "Exchange OAuth authorization code for access and refresh tokens.",
+            "description": "Exchange OAuth authorization code for access and refresh tokens (legacy alias).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -80,13 +85,54 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
+            }
+        },
+        {
+            "name": "complete_code_exchange",
+            "description": "Complete PKCE OAuth authorization code exchange with state validation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The authorization code from OAuth callback"
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "The state parameter from OAuth callback"
+                    }
+                },
+                "required": ["code", "state"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["text"]},
+                                "text": {"type": "string"}
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
@@ -105,13 +151,16 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
@@ -161,13 +210,92 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
+            }
+        },
+        {
+            "name": "export_hmrc_csv",
+            "description": "Export transactions as HMRC-ready CSV with categorization and summary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "account_id": {
+                        "type": "string",
+                        "description": "The account ID to export transactions for"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "Start date in YYYY-MM-DD format"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "End date in YYYY-MM-DD format"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename for the CSV export (defaults to hmrc_export_<account>_<from>_<to>.csv)"
+                    }
+                },
+                "required": ["account_id", "start_date", "end_date"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["text"]},
+                                "text": {"type": "string"}
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                "required": ["content"],
+                "additionalProperties": False
+            }
+        },
+        {
+            "name": "list_consents",
+            "description": "List all active user consents with their purposes and expiration dates.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["text"]},
+                                "text": {"type": "string"}
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                "required": ["content"],
+                "additionalProperties": False
             }
         }
     ]
@@ -204,8 +332,8 @@ class MCPServer:
 
     def _log_request(self, direction: str, data: Dict[str, Any]):
         """Log MCP requests/responses with PII redaction."""
-        # Create a copy for logging
-        log_data = data.copy()
+        # Deep copy so redaction never mutates the original payload
+        log_data = copy.deepcopy(data)
 
         # Redact sensitive fields
         if "params" in log_data and "arguments" in log_data["params"]:
@@ -312,6 +440,26 @@ class MCPServer:
                         ]
                     }
                 })
+            elif tool_name == "complete_code_exchange":
+                code = arguments.get("code")
+                state = arguments.get("state")
+                if not code or not state:
+                    self.send_error(request.get("id"), -32602, "Missing required parameters: code, state")
+                    return
+
+                result = self._complete_code_exchange(code, state)
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(result, indent=2)
+                            }
+                        ]
+                    }
+                })
             elif tool_name == "get_accounts":
                 result = self._get_accounts_data()
                 self.send_response({
@@ -356,6 +504,48 @@ class MCPServer:
                         ]
                     }
                 })
+            elif tool_name == "export_hmrc_csv":
+                account_id = arguments.get("account_id")
+                start_date = arguments.get("start_date")
+                end_date = arguments.get("end_date")
+                filename = arguments.get("filename")
+
+                if not all([account_id, start_date, end_date]):
+                    self.send_error(request.get("id"), -32602, "Missing required parameters: account_id, start_date, end_date")
+                    return
+
+                # Validate date format
+                if not self._validate_date_format(start_date) or not self._validate_date_format(end_date):
+                    self.send_error(request.get("id"), -32602, "Invalid date format. Use YYYY-MM-DD")
+                    return
+
+                result = self._export_hmrc_csv(account_id, start_date, end_date, filename)
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": result
+                            }
+                        ]
+                    }
+                })
+            elif tool_name == "list_consents":
+                result = self._list_consents()
+                self.send_response({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": result
+                            }
+                        ]
+                    }
+                })
             else:
                 self.send_error(request.get("id"), -32601, f"Unknown tool: {tool_name}")
         except Exception as e:
@@ -373,7 +563,7 @@ class MCPServer:
             return False
 
     def _create_data_auth_link(self) -> Dict[str, Any]:
-        """Create a TrueLayer OAuth authorization URL for data access."""
+        """Create a TrueLayer OAuth authorization URL for data access with PKCE."""
         client_id = os.getenv("TRUELAYER_CLIENT_ID")
         redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8080/callback")
 
@@ -383,12 +573,21 @@ class MCPServer:
                 "mock_url": "https://auth.truelayer-sandbox.com/connect/authorize?response_type=code&client_id=YOUR_CLIENT_ID&scope=info%20accounts%20balance%20transactions&redirect_uri=http://localhost:8080/callback&providers=mock"
             }
 
+        # Generate PKCE parameters
+        from pkce import generate_code_verifier
+        state = generate_random_state()
+        code_verifier = generate_code_verifier()
+        state, code_challenge, _ = pkce_manager.create_flow(state, code_verifier)
+
         params = {
             "response_type": "code",
             "client_id": client_id,
             "scope": "info accounts balance transactions",
             "redirect_uri": redirect_uri,
-            "providers": "mock"
+            "providers": "mock",
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256"
         }
 
         auth_url = f"https://auth.truelayer-sandbox.com/connect/authorize?{urlencode(params)}"
@@ -396,10 +595,11 @@ class MCPServer:
         return {
             "auth_url": auth_url,
             "redirect_uri": redirect_uri,
-            "instructions": "Visit the auth_url to authorize access, then use the returned code with exchange_code tool"
+            "state": state,
+            "instructions": "Visit the auth_url to authorize access, then use the returned code and state with complete_code_exchange tool"
         }
 
-    def _exchange_code(self, code: str) -> Dict[str, Any]:
+    def _exchange_code(self, code: str, code_verifier: Optional[str] = None) -> Dict[str, Any]:
         """Exchange OAuth authorization code for access and refresh tokens."""
         client_id = os.getenv("TRUELAYER_CLIENT_ID")
         client_secret = os.getenv("TRUELAYER_CLIENT_SECRET")
@@ -418,6 +618,10 @@ class MCPServer:
                 "code": code,
                 "redirect_uri": redirect_uri
             }
+
+            # Add PKCE parameters if available
+            if code_verifier:
+                data["code_verifier"] = code_verifier
 
             response = requests.post(
                 "https://auth.truelayer-sandbox.com/connect/token",
@@ -479,11 +683,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...")
+                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} accounts from TrueLayer response")
+            print(f"📊 Parsed {len(results)} accounts from TrueLayer response", file=sys.stderr)
             return results
 
         except requests.exceptions.RequestException as e:
@@ -508,11 +712,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...")
+                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} transactions from TrueLayer response")
+            print(f"📊 Parsed {len(results)} transactions from TrueLayer response", file=sys.stderr)
             return results
 
         except requests.exceptions.RequestException as e:
@@ -536,15 +740,15 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print("🔑 User token found, fetching accounts...")
+                print("🔑 User token found, fetching accounts...", file=sys.stderr)
                 accounts = self._fetch_truelayer_accounts(token)
-                print(f"✅ TrueLayer returned {len(accounts)} accounts")
+                print(f"✅ TrueLayer returned {len(accounts)} accounts", file=sys.stderr)
                 return accounts
             except Exception as e:
-                print(f"❌ TrueLayer API error: {e}")
-                print("🔄 Falling back to mock data...")
+                print(f"❌ TrueLayer API error: {e}", file=sys.stderr)
+                print("🔄 Falling back to mock data...", file=sys.stderr)
         else:
-            print("⚠️ No user token found, using mock data")
+            print("⚠️ No user token found, using mock data", file=sys.stderr)
 
         # Fallback mock
         return [
@@ -569,9 +773,9 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...")
+                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...", file=sys.stderr)
                 transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date, limit, page)
-                print(f"✅ TrueLayer returned {len(transactions)} transactions")
+                print(f"✅ TrueLayer returned {len(transactions)} transactions", file=sys.stderr)
 
                 if not include_raw:
                     # Redact sensitive data by default
@@ -579,10 +783,10 @@ class MCPServer:
 
                 return transactions
             except Exception as e:
-                print(f"❌ TrueLayer transactions API error: {e}")
-                print("🔄 Falling back to mock data...")
+                print(f"❌ TrueLayer transactions API error: {e}", file=sys.stderr)
+                print("🔄 Falling back to mock data...", file=sys.stderr)
         else:
-            print("⚠️ No user token found, using mock data")
+            print("⚠️ No user token found, using mock data", file=sys.stderr)
 
         # Fallback mock data
         mock_transactions = [
@@ -653,6 +857,188 @@ class MCPServer:
             mock_transactions = [self._redact_transaction(txn) for txn in mock_transactions]
 
         return mock_transactions
+
+    def _complete_code_exchange(self, code: str, state: str) -> Dict[str, Any]:
+        """Complete PKCE OAuth authorization code exchange with state validation."""
+        # Validate state
+        code_verifier = pkce_manager.get_verifier(state)
+        if not code_verifier:
+            return {
+                "error": "Invalid or expired state parameter",
+                "code": -32602
+            }
+
+        # Use the existing exchange logic but with PKCE
+        result = self._exchange_code(code, code_verifier)
+
+        # Add consent to ledger if successful
+        if "success" in result and result["success"]:
+            consent_id = consent_ledger.add_consent(
+                consent_id=state,
+                purpose="Bank account data access for HMRC reporting",
+                scopes=["info", "accounts", "balance", "transactions"],
+                provider="TrueLayer"
+            )
+            result["consent_id"] = consent_id
+
+        return result
+
+    def _list_consents(self) -> str:
+        """List all active user consents."""
+        consents = consent_ledger.list_consents()
+
+        if not consents:
+            return "No active consents found."
+
+        result = "Active User Consents:\n"
+        result += "=" * 50 + "\n\n"
+
+        for consent in consents:
+            result += f"Consent ID: {consent['id']}\n"
+            result += f"Purpose: {consent['purpose']}\n"
+            result += f"Provider: {consent['provider']}\n"
+            result += f"Scopes: {', '.join(consent['scopes'])}\n"
+            result += f"Granted: {consent['granted_at']}\n"
+            result += f"Expires: {consent['expires_at']}\n"
+            result += "-" * 30 + "\n\n"
+
+        return result
+
+    def _categorize_transaction(self, transaction: Dict[str, Any]) -> str:
+        """Categorize transaction for HMRC reporting."""
+        # If transaction already has a category, prefer it
+        existing_category = transaction.get("category", "").lower()
+        if existing_category:
+            return existing_category.title()
+
+        # Get description for pattern matching
+        description = (transaction.get("description", "") + " " +
+                      transaction.get("merchant_name", "")).lower()
+
+        # HMRC categorization buckets
+        if any(keyword in description for keyword in ["salary", "invoice", "stripe", "income"]):
+            return "Income"
+        elif any(keyword in description for keyword in ["interest"]):
+            return "Bank Interest"
+        elif any(keyword in description for keyword in ["uber", "train", "rail", "tfl", "taxi"]):
+            return "Travel"
+        elif any(keyword in description for keyword in ["coffee", "cafe", "restaurant"]):
+            return "Office Costs"
+        elif any(keyword in description for keyword in ["gas", "electric", "water", "broadband"]):
+            return "Utilities"
+        elif any(keyword in description for keyword in ["wise", "transferwise", "fee", "charge"]):
+            return "Bank charges"
+        else:
+            return "General expenses"
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to be safe for filesystem."""
+        # Remove or replace unsafe characters
+        safe_filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        # Ensure it has .csv extension
+        if not safe_filename.endswith('.csv'):
+            safe_filename += '.csv'
+        return safe_filename
+
+    def _export_hmrc_csv(self, account_id: str, start_date: str, end_date: str, filename: Optional[str] = None) -> str:
+        """Export transactions as HMRC-ready CSV with categorization and summary."""
+        # Get transactions data
+        transactions = self._get_transactions_data(account_id, start_date, end_date, include_raw=True)
+
+        # Generate filename if not provided
+        if not filename:
+            filename = f"hmrc_export_{account_id}_{start_date}_{end_date}.csv"
+
+        # Sanitize filename
+        safe_filename = self._sanitize_filename(filename)
+
+        # Prepare CSV data
+        csv_rows = []
+        income_total = 0
+        expense_total = 0
+        category_totals = {}
+
+        for transaction in transactions:
+            # Convert date from YYYY-MM-DD to DD/MM/YYYY
+            date_str = transaction.get("date", "")
+            if date_str:
+                try:
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                    formatted_date = date_obj.strftime("%d/%m/%Y")
+                except ValueError:
+                    formatted_date = date_str
+            else:
+                formatted_date = ""
+
+            # Get amount and currency
+            amount = transaction.get("amount", 0)
+            currency = transaction.get("currency", "GBP")
+
+            # Categorize transaction
+            category = self._categorize_transaction(transaction)
+
+            # Get description
+            description = transaction.get("description", "") or transaction.get("merchant_name", "")
+
+            # Add to CSV
+            csv_rows.append({
+                "Date": formatted_date,
+                "Description": description,
+                "Amount": abs(amount),  # HMRC wants positive amounts
+                "Currency": currency,
+                "HMRC Category": category
+            })
+
+            # Calculate totals
+            if amount > 0:
+                income_total += amount
+            else:
+                expense_total += abs(amount)
+
+            # Track category totals
+            category_totals[category] = category_totals.get(category, 0) + abs(amount)
+
+        # Write CSV file
+        try:
+            with open(safe_filename, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ["Date", "Description", "Amount", "Currency", "HMRC Category"]
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                writer.writeheader()
+                writer.writerows(csv_rows)
+
+            print(f"✅ CSV exported to {safe_filename} with {len(csv_rows)} transactions", file=sys.stderr)
+        except Exception as e:
+            print(f"❌ Error writing CSV file: {e}", file=sys.stderr)
+            return f"Error: Failed to write CSV file: {str(e)}"
+
+        # Calculate summary
+        net_total = income_total - expense_total
+
+        # Get top 3 expense categories
+        expense_categories = {k: v for k, v in category_totals.items() if k != "Income" and k != "Bank Interest"}
+        top_expenses = sorted(expense_categories.items(), key=lambda x: x[1], reverse=True)[:3]
+
+        # Create summary
+        summary = f"""HMRC CSV Export Summary
+=====================
+File: {safe_filename}
+Period: {start_date} to {end_date}
+Account: {account_id}
+Transactions: {len(csv_rows)}
+
+Totals:
+- Income: £{income_total:.2f}
+- Expenses: £{expense_total:.2f}
+- Net: £{net_total:.2f}
+
+Top 3 Expense Categories:
+"""
+
+        for i, (category, amount) in enumerate(top_expenses, 1):
+            summary += f"{i}. {category}: £{amount:.2f}\n"
+
+        return summary
 
 
 def run_mcp_server():

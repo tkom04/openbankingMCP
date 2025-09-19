@@ -73,7 +73,7 @@ def test_tools_are_mcp_shaped():
 def test_tool_names():
     """Test that tool names are valid."""
     tools = build_tools_list()
-    expected_tools = ["create_data_auth_link", "exchange_code", "get_accounts", "get_transactions"]
+    expected_tools = ["create_data_auth_link", "exchange_code", "complete_code_exchange", "get_accounts", "get_transactions", "export_hmrc_csv", "list_consents"]
 
     actual_names = [tool["name"] for tool in tools]
 
