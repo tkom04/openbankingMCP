@@ -41,7 +41,7 @@ def test_list_consents_returns_content():
 
 
 def test_complete_code_exchange_state_mismatch():
-    """Test that complete_code_exchange returns -32602 error for invalid state."""
+    """Test that complete_code_exchange returns error for invalid state."""
     res = rpc({
         "jsonrpc": "2.0",
         "id": 2,
@@ -55,9 +55,12 @@ def test_complete_code_exchange_state_mismatch():
         }
     })
 
-    # Should return error for invalid state
-    assert "error" in res
-    assert res["error"]["code"] == -32602
+    # Should return error content for invalid state
+    content = res["result"]["content"][0]["text"]
+    result_data = json.loads(content)
+
+    assert "error" in result_data
+    assert result_data["code"] == -32602
     print("✅ complete_code_exchange handles state mismatch")
 
 
