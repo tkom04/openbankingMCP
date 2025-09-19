@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import re
+import copy
 import requests
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -48,13 +49,16 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
@@ -79,13 +83,16 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
@@ -104,13 +111,16 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         },
         {
@@ -160,13 +170,16 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string"},
+                                "type": {"type": "string", "enum": ["text"]},
                                 "text": {"type": "string"}
-                            }
+                            },
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     }
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": False
             }
         }
     ]
@@ -179,7 +192,7 @@ class MCPServer:
         self.tools = validate_tools(build_tools_list())
         # In-memory token storage (in production, use proper storage)
         self.user_tokens = {}
-        
+
         # Log startup info
         print(f"🚀 server_start python={sys.version.split()[0]} cwd={os.getcwd()}", file=sys.stderr)
 
@@ -200,18 +213,18 @@ class MCPServer:
             }
         }
         self.send_response(error_response)
-    
+
     def _log_request(self, direction: str, data: Dict[str, Any]):
         """Log MCP requests/responses with PII redaction."""
-        # Create a copy for logging
-        log_data = data.copy()
-        
+        # Deep copy so redaction never mutates the original payload
+        log_data = copy.deepcopy(data)
+
         # Redact sensitive fields
         if "params" in log_data and "arguments" in log_data["params"]:
             args = log_data["params"]["arguments"]
             if "code" in args:
                 args["code"] = "[REDACTED]"
-        
+
         # Redact result content if it contains tokens
         if "result" in log_data and "content" in log_data["result"]:
             content = log_data["result"]["content"]
@@ -219,14 +232,14 @@ class MCPServer:
                 text_content = content[0].get("text", "")
                 if "access_token" in text_content or "refresh_token" in text_content:
                     content[0]["text"] = "[REDACTED_TOKEN_DATA]"
-        
+
         print(f"📝 {direction}: {json.dumps(log_data, indent=2)}", file=sys.stderr)
 
     def handle_request(self, request: Dict[str, Any]):
         """Handle incoming MCP requests."""
         # Log incoming request (redacted)
         self._log_request("rpc_in", request)
-        
+
         method = request.get("method")
         params = request.get("params", {})
 
@@ -297,7 +310,7 @@ class MCPServer:
                 if not code:
                     self.send_error(request.get("id"), -32602, "Missing required parameter: code")
                     return
-                
+
                 result = self._exchange_code(code)
                 self.send_response({
                     "jsonrpc": "2.0",
@@ -375,7 +388,7 @@ class MCPServer:
         """Create a TrueLayer OAuth authorization URL for data access."""
         client_id = os.getenv("TRUELAYER_CLIENT_ID")
         redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8080/callback")
-        
+
         if not client_id:
             return {
                 "error": "TRUELAYER_CLIENT_ID environment variable not set",
@@ -389,9 +402,9 @@ class MCPServer:
             "redirect_uri": redirect_uri,
             "providers": "mock"
         }
-        
+
         auth_url = f"https://auth.truelayer-sandbox.com/connect/authorize?{urlencode(params)}"
-        
+
         return {
             "auth_url": auth_url,
             "redirect_uri": redirect_uri,
@@ -435,7 +448,7 @@ class MCPServer:
                     "access_token": access_token,
                     "refresh_token": refresh_token
                 }
-                
+
                 return {
                     "success": True,
                     "access_token": access_token[:20] + "...",  # Redacted for security
@@ -478,11 +491,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...")
+                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} accounts from TrueLayer response")
+            print(f"📊 Parsed {len(results)} accounts from TrueLayer response", file=sys.stderr)
             return results
 
         except requests.exceptions.RequestException as e:
@@ -507,11 +520,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...")
+                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} transactions from TrueLayer response")
+            print(f"📊 Parsed {len(results)} transactions from TrueLayer response", file=sys.stderr)
             return results
 
         except requests.exceptions.RequestException as e:
@@ -535,15 +548,15 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print("🔑 User token found, fetching accounts...")
+                print("🔑 User token found, fetching accounts...", file=sys.stderr)
                 accounts = self._fetch_truelayer_accounts(token)
-                print(f"✅ TrueLayer returned {len(accounts)} accounts")
+                print(f"✅ TrueLayer returned {len(accounts)} accounts", file=sys.stderr)
                 return accounts
             except Exception as e:
-                print(f"❌ TrueLayer API error: {e}")
-                print("🔄 Falling back to mock data...")
+                print(f"❌ TrueLayer API error: {e}", file=sys.stderr)
+                print("🔄 Falling back to mock data...", file=sys.stderr)
         else:
-            print("⚠️ No user token found, using mock data")
+            print("⚠️ No user token found, using mock data", file=sys.stderr)
 
         # Fallback mock
         return [
@@ -568,20 +581,20 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...")
+                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...", file=sys.stderr)
                 transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date, limit, page)
-                print(f"✅ TrueLayer returned {len(transactions)} transactions")
-                
+                print(f"✅ TrueLayer returned {len(transactions)} transactions", file=sys.stderr)
+
                 if not include_raw:
                     # Redact sensitive data by default
                     transactions = [self._redact_transaction(txn) for txn in transactions]
-                
+
                 return transactions
             except Exception as e:
-                print(f"❌ TrueLayer transactions API error: {e}")
-                print("🔄 Falling back to mock data...")
+                print(f"❌ TrueLayer transactions API error: {e}", file=sys.stderr)
+                print("🔄 Falling back to mock data...", file=sys.stderr)
         else:
-            print("⚠️ No user token found, using mock data")
+            print("⚠️ No user token found, using mock data", file=sys.stderr)
 
         # Fallback mock data
         mock_transactions = [
