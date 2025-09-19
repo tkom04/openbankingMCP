@@ -20,7 +20,7 @@
    ```powershell
    # Run schema tests
    py test_schema.py
-
+   
    # Test MCP server directly
    echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | py server.py
    ```
@@ -30,7 +30,7 @@
 ## Available Tools
 
 - `create_data_auth_link` - Create OAuth authorization URL
-- `exchange_code` - Exchange OAuth code for tokens
+- `exchange_code` - Exchange OAuth code for tokens  
 - `get_accounts` - List bank accounts
 - `get_transactions` - Get transactions for an account
 
@@ -43,6 +43,6 @@
 ## Files
 
 - `server.py` - Main MCP server
-- `validate.py` - Schema validation utilities
+- `validate.py` - Schema validation utilities  
 - `test_schema.py` - Compliance tests
 - `.cursor/mcp.json` - Cursor configuration

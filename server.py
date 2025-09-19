@@ -13,12 +13,12 @@ import json
 import os
 import sys
 import re
-import copy
 import requests
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 from validate import validate_tools
+from pkce import pkce_manager, consent_ledger, generate_random_state
 
 
 def _is_debug_payload_logging_enabled() -> bool:
@@ -49,16 +49,13 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["text"]},
+                                "type": {"type": "string"},
                                 "text": {"type": "string"}
-                            },
-                            "required": ["type", "text"],
-                            "additionalProperties": False
+                            }
                         }
                     }
                 },
-                "required": ["content"],
-                "additionalProperties": False
+                "required": ["content"]
             }
         },
         {
@@ -83,16 +80,13 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["text"]},
+                                "type": {"type": "string"},
                                 "text": {"type": "string"}
-                            },
-                            "required": ["type", "text"],
-                            "additionalProperties": False
+                            }
                         }
                     }
                 },
-                "required": ["content"],
-                "additionalProperties": False
+                "required": ["content"]
             }
         },
         {
@@ -111,16 +105,13 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["text"]},
+                                "type": {"type": "string"},
                                 "text": {"type": "string"}
-                            },
-                            "required": ["type", "text"],
-                            "additionalProperties": False
+                            }
                         }
                     }
                 },
-                "required": ["content"],
-                "additionalProperties": False
+                "required": ["content"]
             }
         },
         {
@@ -170,16 +161,13 @@ def build_tools_list():
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {"type": "string", "enum": ["text"]},
+                                "type": {"type": "string"},
                                 "text": {"type": "string"}
-                            },
-                            "required": ["type", "text"],
-                            "additionalProperties": False
+                            }
                         }
                     }
                 },
-                "required": ["content"],
-                "additionalProperties": False
+                "required": ["content"]
             }
         }
     ]
@@ -216,8 +204,8 @@ class MCPServer:
 
     def _log_request(self, direction: str, data: Dict[str, Any]):
         """Log MCP requests/responses with PII redaction."""
-        # Deep copy so redaction never mutates the original payload
-        log_data = copy.deepcopy(data)
+        # Create a copy for logging
+        log_data = data.copy()
 
         # Redact sensitive fields
         if "params" in log_data and "arguments" in log_data["params"]:
@@ -491,11 +479,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
+                print(f"🪵 Accounts payload preview (debug enabled): {response.text[:200]}...")
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} accounts from TrueLayer response", file=sys.stderr)
+            print(f"📊 Parsed {len(results)} accounts from TrueLayer response")
             return results
 
         except requests.exceptions.RequestException as e:
@@ -520,11 +508,11 @@ class MCPServer:
             response.raise_for_status()
 
             if DEBUG_TRUELAYER_PAYLOADS:
-                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...", file=sys.stderr)
+                print(f"🪵 Transactions payload preview (debug enabled): {response.text[:200]}...")
 
             data = response.json()
             results = data.get("results", [])
-            print(f"📊 Parsed {len(results)} transactions from TrueLayer response", file=sys.stderr)
+            print(f"📊 Parsed {len(results)} transactions from TrueLayer response")
             return results
 
         except requests.exceptions.RequestException as e:
@@ -548,15 +536,15 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print("🔑 User token found, fetching accounts...", file=sys.stderr)
+                print("🔑 User token found, fetching accounts...")
                 accounts = self._fetch_truelayer_accounts(token)
-                print(f"✅ TrueLayer returned {len(accounts)} accounts", file=sys.stderr)
+                print(f"✅ TrueLayer returned {len(accounts)} accounts")
                 return accounts
             except Exception as e:
-                print(f"❌ TrueLayer API error: {e}", file=sys.stderr)
-                print("🔄 Falling back to mock data...", file=sys.stderr)
+                print(f"❌ TrueLayer API error: {e}")
+                print("🔄 Falling back to mock data...")
         else:
-            print("⚠️ No user token found, using mock data", file=sys.stderr)
+            print("⚠️ No user token found, using mock data")
 
         # Fallback mock
         return [
@@ -581,9 +569,9 @@ class MCPServer:
         token = self._get_truelayer_token()
         if token:
             try:
-                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...", file=sys.stderr)
+                print(f"🔑 User token found, fetching transactions for {account_id} ({start_date} to {end_date})...")
                 transactions = self._fetch_truelayer_transactions(token, account_id, start_date, end_date, limit, page)
-                print(f"✅ TrueLayer returned {len(transactions)} transactions", file=sys.stderr)
+                print(f"✅ TrueLayer returned {len(transactions)} transactions")
 
                 if not include_raw:
                     # Redact sensitive data by default
@@ -591,10 +579,10 @@ class MCPServer:
 
                 return transactions
             except Exception as e:
-                print(f"❌ TrueLayer transactions API error: {e}", file=sys.stderr)
-                print("🔄 Falling back to mock data...", file=sys.stderr)
+                print(f"❌ TrueLayer transactions API error: {e}")
+                print("🔄 Falling back to mock data...")
         else:
-            print("⚠️ No user token found, using mock data", file=sys.stderr)
+            print("⚠️ No user token found, using mock data")
 
         # Fallback mock data
         mock_transactions = [

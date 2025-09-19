@@ -1,14 +1,14 @@
 {
   "mcpServers": {
     "openbanking-mcp": {
-      "command": "python",
-      "args": ["-m", "server"],
+      "command": "${env:PY_CMD:-python}",
+      "args": ["server.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "TRUELAYER_CLIENT_ID": "${env:TRUELAYER_CLIENT_ID}",
         "TRUELAYER_CLIENT_SECRET": "${env:TRUELAYER_CLIENT_SECRET}",
-        "REDIRECT_URI": "${env:REDIRECT_URI}",
-        "TRUELAYER_DEBUG_PAYLOADS": "${env:TRUELAYER_DEBUG_PAYLOADS}"
+        "REDIRECT_URI": "${env:REDIRECT_URI:-http://localhost:8080/callback}",
+        "TRUELAYER_DEBUG_PAYLOADS": "${env:TRUELAYER_DEBUG_PAYLOADS:-false}"
       }
     }
   }
