@@ -33,6 +33,11 @@ ENV/
 .vscode/
 .idea/
 
+# Node.js
+node_modules/
+.next/
+out/
+
 # OS
 .DS_Store
 Thumbs.db
