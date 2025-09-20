@@ -11,6 +11,13 @@ const RULES: Array<{ match: RegExp; category: string }> = [
 export function categorize(txs: Tx[]): Tx[] {
   return txs.map((t) => {
     const hit = RULES.find((r) => r.match.test(t.description));
-    return { ...t, category: hit?.category ?? "Uncategorized" };
+    let category = hit?.category ?? "Uncategorized";
+
+    // Map "Shopping" to "General expenses" for consistency
+    if (category === "Shopping") {
+      category = "General expenses";
+    }
+
+    return { ...t, category };
   });
 }

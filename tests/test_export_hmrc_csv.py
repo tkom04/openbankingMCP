@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def rpc(req: dict) -> dict:
     """Send RPC request to server and return response."""
     p = subprocess.run(
-        [sys.executable, "-m", "server"],
+        [sys.executable, "-m", "openbankingmcp.server"],
         input=json.dumps(req).encode(),
         capture_output=True,
         check=True
@@ -178,7 +178,14 @@ def test_summary_contains_keywords():
                 }
             })
 
-            summary_text = res["result"]["content"][0]["text"]
+            content_text = res["result"]["content"][0]["text"]
+            result_data = json.loads(content_text)
+
+            # Check that we have both export and summary
+            assert "export" in result_data, "Response should contain 'export' field"
+            assert "summary" in result_data, "Response should contain 'summary' field"
+
+            summary_text = result_data["summary"]
 
             # Check for expected keywords in summary
             expected_keywords = [
@@ -229,16 +236,76 @@ def test_hmrc_categorization():
                 rows = list(reader)
 
                 # Check that categories are valid HMRC categories
-                valid_categories = [
-                    "Income", "Bank Interest", "Travel", "Office Costs",
-                    "Utilities", "Bank charges", "General expenses"
-                ]
+                from openbankingmcp.hmrc import get_valid_hmrc_categories
+                valid_categories = get_valid_hmrc_categories()
 
                 for row in rows:
                     category = row["HMRC Category"]
                     assert category in valid_categories, f"Invalid category: {category}"
 
             print("✅ HMRC categorization test passed")
+
+        finally:
+            os.chdir(original_cwd)
+
+
+def test_export_schema_validation():
+    """Test that export data conforms to Export schema."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        original_cwd = os.getcwd()
+        os.chdir(temp_dir)
+
+        try:
+            res = rpc({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "export_hmrc_csv",
+                    "arguments": {
+                        "account_id": "test123",
+                        "start_date": "2024-09-01",
+                        "end_date": "2024-09-19"
+                    }
+                }
+            })
+
+            content_text = res["result"]["content"][0]["text"]
+            result_data = json.loads(content_text)
+
+            # Check that we have both export and summary
+            assert "export" in result_data, "Response should contain 'export' field"
+            assert "summary" in result_data, "Response should contain 'summary' field"
+
+            export_data = result_data["export"]
+
+            # Validate export schema
+            assert "csv_path" in export_data, "Export should contain 'csv_path' field"
+            assert "metadata" in export_data, "Export should contain 'metadata' field"
+
+            csv_path = export_data["csv_path"]
+            metadata = export_data["metadata"]
+
+            # Validate csv_path
+            assert isinstance(csv_path, str), "CSV path should be a string"
+            assert csv_path.endswith('.csv'), "CSV path should end with .csv"
+
+            # Validate metadata
+            required_metadata_fields = ["account_id", "start_date", "end_date", "transaction_count", "created_at"]
+            for field in required_metadata_fields:
+                assert field in metadata, f"Metadata missing required field: {field}"
+
+            # Type validations
+            assert isinstance(metadata["transaction_count"], int), "Transaction count should be integer"
+            assert isinstance(metadata["created_at"], str), "Created at should be string"
+
+            # Value validations
+            assert metadata["account_id"] == "test123", "Account ID should match request"
+            assert metadata["start_date"] == "2024-09-01", "Start date should match request"
+            assert metadata["end_date"] == "2024-09-19", "End date should match request"
+            assert metadata["transaction_count"] >= 0, "Transaction count should be non-negative"
+
+            print("✅ Export schema validation passed")
 
         finally:
             os.chdir(original_cwd)
@@ -253,6 +320,7 @@ if __name__ == "__main__":
         test_date_format_conversion()
         test_summary_contains_keywords()
         test_hmrc_categorization()
+        test_export_schema_validation()
 
         print("\n🎉 All export_hmrc_csv tests passed!")
         sys.exit(0)

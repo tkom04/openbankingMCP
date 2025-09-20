@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def rpc(req: dict) -> dict:
     """Send RPC request to server and return response."""
     p = subprocess.run(
-        [sys.executable, "-m", "server"],
+        [sys.executable, "-m", "openbankingmcp.server"],
         input=json.dumps(req).encode(),
         capture_output=True,
         check=True

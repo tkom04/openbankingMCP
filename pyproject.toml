@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbankingmcp"
+version = "0.1.0"
+description = "Open Banking MCP server for TrueLayer API integration"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenBanking MCP Team", email = "team@openbankingmcp.com"},
+]
+keywords = ["openbanking", "mcp", "truelayer", "banking", "api"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial",
+]
+
+dependencies = [
+    "requests>=2.32.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/openbankingmcp/openbankingmcp"
+Repository = "https://github.com/openbankingmcp/openbankingmcp"
+Issues = "https://github.com/openbankingmcp/openbankingmcp/issues"
+
+[project.scripts]
+openbanking-mcp = "openbankingmcp.server:run_mcp_server"
+openbanking-api = "openbankingmcp.server:run_rest_api_server"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openbankingmcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
