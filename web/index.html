@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance Autopilot - CSV → Timeline → HMRC CSV</title>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/date-fns@3.6.0/index.js"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; background: #f9fafb; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .upload-area { border: 2px dashed #d1d5db; border-radius: 16px; padding: 32px; text-align: center; background: white; cursor: pointer; }
+        .upload-area:hover { border-color: #9ca3af; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 24px 0; }
+        .stat { background: white; padding: 16px; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+        .stat-value { font-size: 20px; font-weight: 600; }
+        .filters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+        .filter { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 12px; }
+        .btn { padding: 8px 16px; border-radius: 12px; border: none; cursor: pointer; font-weight: 500; }
+        .btn-primary { background: #000; color: white; }
+        .btn-secondary { background: white; color: #000; border: 1px solid #d1d5db; }
+        .table-container { background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f3f4f6; padding: 12px; text-align: left; font-weight: 500; }
+        td { padding: 12px; border-top: 1px solid #e5e7eb; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Finance Autopilot — CSV → Timeline → HMRC CSV</h1>
+
+        <div id="upload-section">
+            <div class="upload-area" onclick="document.getElementById('file-input').click()">
+                <div style="font-size: 18px; font-weight: 600;">Drop a bank CSV or click to upload</div>
+                <div style="font-size: 14px; color: #6b7280; margin-top: 4px;">We parse locally—data stays in your browser.</div>
+            </div>
+            <input type="file" id="file-input" accept=".csv" style="display: none;" onchange="handleFileUpload(event)">
+        </div>
+
+        <div id="main-section" class="hidden">
+            <div class="filters">
+                <input type="text" id="search" class="filter" placeholder="Search description…" onkeyup="filterTransactions()">
+                <input type="date" id="from-date" class="filter" onchange="filterTransactions()">
+                <input type="date" id="to-date" class="filter" onchange="filterTransactions()">
+                <div>
+                    <button onclick="downloadCSV()" class="btn btn-primary">Export HMRC CSV</button>
+                    <button onclick="clearAll()" class="btn btn-secondary">Clear</button>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-label">Incoming</div>
+                    <div class="stat-value" id="incoming-total">£0.00</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Outgoing</div>
+                    <div class="stat-value" id="outgoing-total">£0.00</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Net</div>
+                    <div class="stat-value" id="net-total">£0.00</div>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Category</th>
+                            <th style="text-align: right;">Amount</th>
+                            <th>Direction</th>
+                            <th>Account</th>
+                        </tr>
+                    </thead>
+                    <tbody id="transactions-table">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allTransactions = [];
+        let filteredTransactions = [];
+
+        function parseAmount(raw) {
+            const n = Number(String(raw).replace(/[,£\s]/g, ""));
+            if (Number.isNaN(n)) throw new Error(`Bad amount: ${raw}`);
+            return n >= 0 ? { amount: Math.abs(n), direction: "in" } : { amount: Math.abs(n), direction: "out" };
+        }
+
+        function parseDateUK(raw) {
+            const parts = raw.includes("/") ? raw.split("/") : raw.split("-");
+            let iso = "";
+            if (raw.includes("/")) {
+                const [dd, mm, yyyy] = parts;
+                iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+            } else {
+                iso = raw;
+            }
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) throw new Error(`Bad date: ${raw}`);
+            return d.toISOString().split('T')[0];
+        }
+
+        function categorize(description) {
+            const rules = [
+                { match: /UBER|BOLT|LYFT/i, category: "Travel" },
+                { match: /STARLING|MONZO|REVOLUT/i, category: "Bank Fees" },
+                { match: /AWS|GCP|AZURE/i, category: "Hosting" },
+                { match: /SUBSTACK|NOTION|GOOGLE/i, category: "Software" },
+                { match: /PRET|CAFFE|STARBUCKS/i, category: "Meals" },
+            ];
+            const hit = rules.find(r => r.match.test(description));
+            return hit?.category ?? "Uncategorized";
+        }
+
+        function normalize(rows) {
+            return rows.map((r, i) => {
+                const { amount, direction } = parseAmount(r.Amount);
+                return {
+                    id: `tx_${i}`,
+                    date: parseDateUK(r.Date),
+                    description: r.Description?.trim() ?? "",
+                    amount,
+                    direction,
+                    account: r.Account ?? "Primary",
+                    category: categorize(r.Description?.trim() ?? "")
+                };
+            });
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: (res) => {
+                    try {
+                        allTransactions = normalize(res.data);
+                        filteredTransactions = [...allTransactions];
+                        document.getElementById('upload-section').classList.add('hidden');
+                        document.getElementById('main-section').classList.remove('hidden');
+                        updateDisplay();
+                    } catch (e) {
+                        alert(`Parse error: ${e.message}`);
+                    }
+                },
+                error: (e) => alert(`Parse error: ${e.message}`)
+            });
+        }
+
+        function filterTransactions() {
+            const query = document.getElementById('search').value.toLowerCase();
+            const fromDate = document.getElementById('from-date').value;
+            const toDate = document.getElementById('to-date').value;
+
+            filteredTransactions = allTransactions.filter(t => {
+                if (fromDate && t.date < fromDate) return false;
+                if (toDate && t.date > toDate) return false;
+                if (query && !t.description.toLowerCase().includes(query)) return false;
+                return true;
+            });
+
+            updateDisplay();
+        }
+
+        function updateDisplay() {
+            // Update totals
+            const incoming = filteredTransactions.filter(t => t.direction === "in").reduce((s, t) => s + t.amount, 0);
+            const outgoing = filteredTransactions.filter(t => t.direction === "out").reduce((s, t) => s + t.amount, 0);
+            const net = incoming - outgoing;
+
+            document.getElementById('incoming-total').textContent = `£${incoming.toFixed(2)}`;
+            document.getElementById('outgoing-total').textContent = `£${outgoing.toFixed(2)}`;
+            document.getElementById('net-total').textContent = `£${net.toFixed(2)}`;
+
+            // Update table
+            const tbody = document.getElementById('transactions-table');
+            tbody.innerHTML = filteredTransactions.map(t => `
+                <tr>
+                    <td>${t.date}</td>
+                    <td>${t.description}</td>
+                    <td>${t.category}</td>
+                    <td style="text-align: right;">£${t.amount.toFixed(2)}</td>
+                    <td>${t.direction}</td>
+                    <td>${t.account}</td>
+                </tr>
+            `).join('');
+        }
+
+        function csvSafe(s) {
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        }
+
+        function toSelfAssessmentCSV(txs) {
+            const header = ["Date","Description","Category","Amount","Direction","Account","Note"].join(",");
+            const body = txs.map(t =>
+                [t.date, csvSafe(t.description), t.category, t.amount.toFixed(2), t.direction, t.account, csvSafe(t.note ?? "")]
+                    .join(",")
+            );
+            return [header, ...body].join("\n");
+        }
+
+        function downloadCSV() {
+            const csv = toSelfAssessmentCSV(filteredTransactions);
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "hmrc-self-assessment.csv";
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
+        function clearAll() {
+            allTransactions = [];
+            filteredTransactions = [];
+            document.getElementById('upload-section').classList.remove('hidden');
+            document.getElementById('main-section').classList.add('hidden');
+            document.getElementById('search').value = '';
+            document.getElementById('from-date').value = '';
+            document.getElementById('to-date').value = '';
+            document.getElementById('file-input').value = '';
+        }
+    </script>
+</body>
+</html>
